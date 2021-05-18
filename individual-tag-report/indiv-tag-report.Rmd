@@ -1,0 +1,162 @@
+---
+title: "ProdPad Tag Roundup"
+output: 
+  html_document:
+    theme: paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+`r if(Sys.getenv('PRODPAD_TAG') == '') { "<h4>ERROR: You must set the PRODPAD_TAG environment variable</h4>\n" }`
+`r if(Sys.getenv('PRODPAD_API_KEY') == '') { "<h4>ERROR: You must set the PRODPAD_API_KEY environment variable</h4>\n" }`
+`r if(Sys.getenv('PRODPAD_API_KEY') == '' || Sys.getenv('PRODPAD_TAG') == '') { knitr::knit_exit() }`
+
+## ``r Sys.getenv('PRODPAD_TAG')`` Tag Report {.tabset}
+
+```{r include=FALSE}
+library(dplyr)
+library(prodpad)
+library(tidyr)
+library(reactable)
+
+pcli <- prodpad()
+
+roughstuff <- get_feedback(pcli, tags = Sys.getenv('PRODPAD_TAG'), product = "RStudio Connect")
+
+rsdf <- roughstuff %>%
+  rename(fid = id, logged = created_at) %>%
+  select(fid, feedback, logged, customer) %>%
+  tidyr::unnest_wider(customer) %>%
+  select(name, feedback, logged, fid) %>%
+  rename(customer = name)
+
+lsdf <- roughstuff %>%
+  rename(fid = id) %>%
+  select(fid, tags) %>%
+  tidyr::unnest_longer(tags) %>%
+  tidyr::hoist(tags, tag_name = "tag")
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+tags_tbl <- roughstuff %>%
+  rename(fid = id) %>%
+  select(fid, tags) %>%
+  tidyr::unnest_longer(tags) %>%
+  tidyr::hoist(tags, tag_name = "tag")
+
+ideas_tbl <- roughstuff %>%
+  rename(fid = id) %>%
+  select(fid, ideas) %>%
+  tidyr::unnest_longer(ideas) %>%
+  tidyr::hoist(ideas, iid = "id")
+
+
+getidea <- function(.x) {
+  get_idea(pcli, .x)
+}
+
+library(purrr)
+
+ideas_tbl2 <- ideas_tbl %>%
+  mutate(idea = map(iid, possibly(getidea, NA)))
+
+ideas_tbl3 <- ideas_tbl2 %>%
+  tidyr::hoist(idea, 
+               link = "web_url",
+               title = "title") %>%
+  select(iid, fid, link, title)
+```
+
+### Feedback from the `r Sys.getenv('PRODPAD_TAG')` Tag
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(stringr)
+
+tags_lookup <- function(table, lid){
+  table %>% filter(fid == lid) %>%
+    select(tag_name)
+}
+
+ideas_lookup <- function(table, lid){
+  table %>% filter(fid == lid) %>%
+    select(title, link)
+}
+
+reactable(rsdf, details = function(index) {
+    ftags <- tags_lookup(lsdf, rsdf[index,]$fid)
+    reactable(data.frame(ftags), fullWidth = FALSE, 
+              columns = list(tag_name = colDef(name = "Linked Tags", minWidth = 150))
+              )
+},
+searchable = T,
+highlight = T,
+columns = list(
+  fid = colDef(name = "ID"),
+  feedback = colDef(name = "Feedback", html = T, minWidth = 500, details = function(index){
+    fideas <- ideas_lookup(ideas_tbl3, rsdf[index,]$fid)
+    aid <- str_replace_na(as.vector(fideas$title))
+    paste("Linked Ideas: ", str_c(aid, collapse = ", "))
+  }),
+  logged = colDef(name = "Date", format = colFormat(date = T)),
+  customer = colDef(name = "Requester")
+)
+)
+
+
+```
+
+### Related Tags
+
+ProdPad Feedback is often associated with more than one tag. This summary shows frequency counts for tags that have been used in addition to `r Sys.getenv('PRODPAD_TAG')`.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+reltags <- plyr::count(lsdf, 'tag_name') %>%
+  arrange(desc(freq))
+
+reactable(reltags, defaultPageSize = 14, columns = list(
+  tag_name = colDef(name = "Tag Name"),
+  freq = colDef(name = "Frequency Count")
+))
+```
+
+### Related Ideas
+
+ProdPad Feedback is often associated with one or more Ideas. This summary shows frequency counts for Ideas that have been linked to Feedback under the `r Sys.getenv('PRODPAD_TAG')` tag.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+relide <- ideas_tbl3 %>%
+  drop_na %>%
+  mutate(link_title = paste('<a href="',link,'">',title,'</a>', sep = "")) %>%
+  plyr::count(., 'link_title') %>%
+  arrange(desc(freq))
+
+reactable(relide, defaultPageSize = 14, columns = list(
+  link_title = colDef(name = "Idea Title", html = T),
+  freq = colDef(name = "Frequency Count")
+))
+```
+
+### Feedback Over Time
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Summary of feedback counts by year and month
+
+library(lubridate)
+
+fcounts <- rsdf %>%
+  mutate(date = ymd_hms(logged), month = format(date, "%m"), year = format(date, "%Y")) %>%
+  group_by(month, year) %>%
+  tally() %>%
+  arrange(desc(year), desc(month))
+
+reactable(fcounts, defaultPageSize = 12, columns = list(
+  month = colDef(name = "Month"),
+  year = colDef(name = "Year"),
+  n = colDef(name = "Feedback Count")
+))
+```
