@@ -1,5 +1,5 @@
 ---
-title: "ProdPad Idea Roundup"
+title: "ProdPad Product Idea Roundup"
 output: 
   html_document:
     theme: paper
