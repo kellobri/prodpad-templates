@@ -1,0 +1,58 @@
+---
+title: "ProdPad Idea Roundup"
+output: 
+  html_document:
+    theme: paper
+---
+
+`r if(Sys.getenv('PRODPAD_API_KEY') == '') { "<h4>ERROR: You must set the PRODPAD_API_KEY environment variable</h4>\n" }`
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(prodpad)
+library(dplyr)
+library(purrr)
+
+pcli <- prodpad()
+
+ideas <- get_ideas(pcli, product = 'RStudio Connect') %>%
+  mutate(link_title = paste('<a href="',web_url,'">',title,'</a>', sep = "")) %>%
+  select(id, link_title, description)
+
+get_idea_feedback <- function(client, id) {
+  url <- glue::glue("/ideas/", as.character(id), "/feedback")
+  rawdat <- client$GET(url)
+  return(rawdat)
+}
+
+nfeedback <- function(.x){
+  fdbk <- get_idea_feedback(pcli, .x)
+  length(fdbk)
+}
+
+rsc_ideas_fdbk <- ideas %>%
+  mutate(total_feedback = map(id, possibly(nfeedback, NA)))
+
+
+rsc_unlist <- rsc_ideas_fdbk %>%
+  mutate(feedback_count = as.numeric(unlist(total_feedback))) %>%
+  select(-total_feedback)
+
+```
+
+```{r echo=FALSE}
+library(reactable)
+
+reactable::reactable(rsc_unlist, 
+                     defaultPageSize = 16, 
+                     searchable = T,
+                     highlight = T,
+                     columns = list(
+                       id = colDef(name = "ID"),
+                       link_title = colDef(name = "Idea", html = T),
+                       description = colDef(name = "Description", html = T, 
+                                            minWidth = 140),
+                       feedback_count = colDef(name = "Feedback Count")
+))
+
+```
+
